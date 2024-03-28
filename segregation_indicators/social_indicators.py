@@ -109,6 +109,13 @@ def calculate_ei(group, majority_segment, minority_segment):
     ei_index = float(maj_to_min_calls + min_to_maj_calls - min_to_min_calls - maj_to_maj_calls) / total_calls if total_calls else 0
     return ei_index
 
+def contact_diversity(df):
+    df_processed = df.copy()
+    validate_dataframe_columns(df_processed, data_type='individual')
+    # Assuming correct segment information is aligned with 'customer_id'
+    diversity = df_processed.groupby('customer_id').agg({'segment_caller': pd.Series.nunique})
+    diversity.rename(columns={'segment_caller': 'segment_diversity'}, inplace=True)
+    return diversity
 
 def calculate_segment_ratios(df):
     df_processed = df.copy()
@@ -135,3 +142,46 @@ def calculate_segment_ratios(df):
     segment_ratios.columns = ['call_ratio_seg_' + str(int(col)) for col in segment_ratios.columns]
 
     return segment_ratios.reset_index()
+
+def calculate_city_relations_counts(df):
+    df_processed = df.copy()
+    validate_dataframe_columns(df_processed, data_type='individual')
+
+    unique_customer_ids = df_processed['customer_id'].unique()
+    chunk_size = len(unique_customer_ids) // 4  # Aim for 4 chunks; adjust based on your data size/preferences
+
+    # Placeholder for results from each chunk
+    results = []
+
+    for start_idx in range(0, len(unique_customer_ids), chunk_size):
+        end_idx = start_idx + chunk_size
+        customer_ids_chunk = unique_customer_ids[start_idx:end_idx]
+
+        # Filter the DataFrame for the current chunk of customer IDs
+        df_chunk = df_processed[df_processed['customer_id'].isin(customer_ids_chunk)]
+
+        # Process each chunk using vectorized operations
+        df_chunk.loc[:, 'customer_city'] = np.where(df_chunk['call_type'] == 1, df_chunk['city_id_callee'],
+                                                    df_chunk['city_id_caller'])
+        df_chunk.loc[:, 'other_party_city'] = np.where(df_chunk['call_type'] == 1, df_chunk['city_id_caller'],
+                                                       df_chunk['city_id_callee'])
+
+        #df_chunk['customer_city'] = np.where(df_chunk['call_type'] == 1, df_chunk['city_id_callee'], df_chunk['city_id_caller'])
+        #df_chunk['other_party_city'] = np.where(df_chunk['call_type'] == 1, df_chunk['city_id_caller'], df_chunk['city_id_callee'])
+        df_chunk = df_chunk.dropna(subset=['customer_city', 'other_party_city'], how='all')
+
+        # Calculate unique counts for the chunk
+        customer_city_count = df_chunk.groupby('customer_id')['customer_city'].nunique()
+        other_party_city_count = df_chunk.groupby('customer_id')['other_party_city'].nunique()
+
+        # Combine the counts into a single DataFrame for the chunk
+        city_counts_chunk = pd.concat([customer_city_count, other_party_city_count], axis=1).reset_index()
+        city_counts_chunk.columns = ['customer_id', 'cities_been_to_count', 'cities_in_communication_count']
+
+        # Append chunk results to the results list
+        results.append(city_counts_chunk)
+
+    # Concatenate all chunk results into a single DataFrame
+    city_counts_final = pd.concat(results).reset_index(drop=True)
+
+    return city_counts_final

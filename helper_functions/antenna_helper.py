@@ -37,8 +37,9 @@ def read_antenna_data(antenna_location, data_type):
     return df
 
 
-def antenna_aggregate_calls(df, tower_location, data_direction, spatial_aggregation_level, spatial_aggregation_type,
-                            temporal_aggregation_level='week', segment=True, exclude_same_location_calls=False):
+def antenna_aggregate_calls(df, data_direction, spatial_aggregation_level, spatial_aggregation_type,
+                            temporal_aggregation_level='week', segment=True, exclude_same_location_calls=False,
+                            tower_location=None, df_tower=None):
     df_processed = df.copy()
     if not pd.api.types.is_datetime64_any_dtype(df_processed['time']):
         df_processed['time'] = pd.to_datetime(df_processed['time'])
@@ -46,35 +47,37 @@ def antenna_aggregate_calls(df, tower_location, data_direction, spatial_aggregat
 
     valid_types = ['location_to_location', 'per_location']
     if spatial_aggregation_type not in valid_types:
-        raise ValueError(f"Invalid value for site_aggregation_type. It should be one of {valid_types}.")
+        raise ValueError(f"Invalid value for spatial_aggregation_type. It should be one of {valid_types}.")
 
     suffix, opposite_suffix = get_suffixes_based_on_direction(data_direction)
 
     loc_level = get_location_level(spatial_aggregation_level)
-    if spatial_aggregation_type == 'per_location':
-        if not spatial_aggregation_level == "site":
+
+    # Determine if df_tower needs to be loaded from tower_location
+    if df_tower is None:
+        if tower_location is None:
+            raise ValueError("Either tower_location or df_tower must be provided.")
+        df_tower = read_tower_data(tower_location)[['site_id', loc_level]]
+
+    if spatial_aggregation_type in ['per_location', 'location_to_location']:
+        if spatial_aggregation_level != "site":
             spatial_column = f"{loc_level}_{suffix}"
-            df_tower = read_tower_data(tower_location)[['site_id', loc_level]]
             df_processed = df_processed.merge(df_tower, right_on='site_id', left_on=f'site_id_{suffix}', how='left'). \
                 rename(columns={loc_level: spatial_column}).drop(columns=['site_id'])
+
+            if spatial_aggregation_type == 'location_to_location':
+                opposite_spatial_column = f"{loc_level}_{opposite_suffix}"
+                df_processed = df_processed.merge(df_tower, right_on='site_id', left_on=f'site_id_{opposite_suffix}',
+                                                  how='left'). \
+                    rename(columns={loc_level: opposite_spatial_column}).drop(columns=['site_id'])
         else:
-            spatial_column = f"{loc_level}_{suffix}"
-    else:
-        if not spatial_aggregation_level == "site":
-            spatial_column = f"{loc_level}_{suffix}"
-            opposite_spatial_column = f"{loc_level}_{opposite_suffix}"
-            df_tower = read_tower_data(tower_location)[['site_id', loc_level]]
-            df_processed = df_processed.merge(df_tower, right_on='site_id', left_on=f'site_id_{suffix}', how='left'). \
-                rename(columns={loc_level: spatial_column}).drop(columns=['site_id'])
-            df_processed = df_processed.merge(df_tower, right_on='site_id', left_on=f'site_id_{opposite_suffix}',
-                                              how='left'). \
-                rename(columns={loc_level: opposite_spatial_column}).drop(columns=['site_id'])
-        else:
-            spatial_column = f"{loc_level}_{suffix}"
-            opposite_spatial_column = f"{loc_level}_{opposite_suffix}"
+            spatial_column = f"site_id_{suffix}"
+            if spatial_aggregation_type == 'location_to_location':
+                opposite_spatial_column = f"site_id_{opposite_suffix}"
 
     if exclude_same_location_calls and spatial_aggregation_type == 'location_to_location':
-        df_processed = df_processed[df_processed[f"{loc_level}_caller"] != df_processed[f"{loc_level}_callee"]]
+        df_processed = df_processed[
+            df_processed[f"{loc_level}_{suffix}"] != df_processed[f"{loc_level}_{opposite_suffix}"]]
 
     df_processed = apply_temporal_aggregation(df_processed, temporal_aggregation_level)
 
@@ -84,10 +87,12 @@ def antenna_aggregate_calls(df, tower_location, data_direction, spatial_aggregat
     }
     if spatial_aggregation_type == 'per_location':
         group_by_columns = [temporal_aggregation_level, spatial_column]
-    else:
-        group_by_columns = [temporal_aggregation_level, spatial_column, opposite_spatial_column]
+    else:  # For location_to_location
+        group_by_columns = [temporal_aggregation_level, spatial_column,
+                            opposite_spatial_column if spatial_aggregation_type == 'location_to_location' else spatial_column]
     if segment:
         group_by_columns.append('segment_caller_callee')
+
     final_agg = df_processed.groupby(group_by_columns).agg(aggregation).reset_index()
 
     return final_agg

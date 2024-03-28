@@ -112,8 +112,8 @@ def scikit_approach(df, suffix, *args):
     df_daily = df_daily.drop_duplicates(['customer_id', 'day'], keep='last').reset_index(drop=True)
 
     return df_daily
-def daily_home_location_series(file_path, data_direction, tower_location, spatial_level,
-                                             approach='sort_approach', cust_list=None, file_list =None):
+def daily_home_location_series(file_path, data_direction, spatial_level,
+                                             approach='sort_approach', cust_list=None, file_list =None,tower_location=None,df_tower=None):
 
     if not isinstance(file_list, list):
         raise ValueError("L must be a list.")
@@ -132,7 +132,7 @@ def daily_home_location_series(file_path, data_direction, tower_location, spatia
     for i in file_list:
 
         file_path_formatted = file_path.format(i)
-        df=process_fine_grained(file_path_formatted, data_direction, tower_location,cust_list)
+        df=process_fine_grained(file_path_formatted, data_direction, tower_location, cust_list, df_tower)
 
         if spatial_level == 'site':
             column_name = f'site_id_{suffix}'

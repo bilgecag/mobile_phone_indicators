@@ -14,7 +14,7 @@ def read_fine_grained(dir_finegrained, datatype):
         df.columns = ['time', 'customer_id', 'segment', 'site_id']
         df['time'] = pd.to_datetime(df['time'], format='%Y-%m-%d %H')
     elif datatype == 'CDR':
-        df = pd.read_csv(dir_finegrained)
+        df = pd.read_csv(dir_finegrained,index_col=0)
         df = df.rename(columns={"CUSTOMER_ID": "customer_id", "DAY": "date", "HOUR": "hour",
                                 "CALLE_SITE_ID": "site_id_callee", \
                                 "CALER_SITE_ID": "site_id_caller", "CALLEE_SEGMENT": "segment_callee",\
@@ -43,15 +43,28 @@ def read_cdr_data_tt(file_directory_cdr, file_directory_towers):
 
 ## Aggregation
 
-def fine_grained_to_antenna(df):
-    segs = ['segment_1', 'segment_2', 'segment_3', 'segment_4',
+def fine_grained_to_antenna(df,datatype):
+    if datatype == 'XDR':
+        segs = ['segment_1', 'segment_2', 'segment_3', 'segment_4',
             'segment_5', 'segment_6', 'segment_7', 'segment_8', 'segment_9',
             'segment_10', 'segment_11', 'segment_12', 'segment_13', 'segment_14']
 
-    dum = pd.get_dummies(df['segment'], prefix='segment')
-    df = df.drop_duplicates(subset=['customer_id', 'time', 'site_id'], keep='last')
-    df = pd.concat([df, dum], axis=1)
-    df = pd.pivot_table(df, index=['site_id', 'time'], values=segs, aggfunc=np.sum).reset_index()
+        dum = pd.get_dummies(df['segment'], prefix='segment')
+        df = df.drop_duplicates(subset=['customer_id', 'time', 'site_id'], keep='last')
+        df = pd.concat([df, dum], axis=1)
+        df = pd.pivot_table(df, index=['site_id', 'time'], values=segs, aggfunc=np.sum).reset_index()
+    if datatype == 'CDR':
+        df['segment_caller'].fillna(0, inplace=True)
+        df['segment_callee'].fillna(0, inplace=True)
+
+        df['segment_caller'] = df['segment_caller'].astype(int)
+        df['segment_callee'] = df['segment_callee'].astype(int)
+
+        df['segment_caller_callee'] = df['segment_caller'].astype(str) + "-" + df['segment_callee'].astype(str)
+
+        df=df.groupby(['time', 'site_id_caller', 'site_id_callee', 'segment_caller_callee']).size().reset_index(
+            name='call_count')
+
     return df
 
 ## Signal variables
@@ -111,7 +124,7 @@ def filter_customers(cust_df, signal_count, unique_days_threshold, night_signal_
 
     return filtered_df
 
-def process_fine_grained(file_path_formatted,data_direction,tower_location,cust_list=None):
+def process_fine_grained(file_path_formatted, data_direction, tower_location=None, cust_list=None, df_tower=None):
     suffix, opposite_suffix = get_suffixes_based_on_direction(data_direction)
     df = read_fine_grained(file_path_formatted, datatype="CDR")
     df = calculate_date_values(df)
@@ -120,7 +133,10 @@ def process_fine_grained(file_path_formatted,data_direction,tower_location,cust_
             'customer_id'].unique().tolist()
     df = df[df['customer_id'].isin(filtered_cust) == True].reset_index(drop=True)
 
-    df_tower = read_tower_data(tower_location,crs="EPSG:4326")
+    if df_tower is None:
+        if tower_location is None:
+            raise ValueError("Either tower_location or df_tower must be provided.")
+        df_tower = read_tower_data(tower_location, crs="EPSG:4326")
     df_tower = df_tower[['city_district_id', 'site_id','lat','lng','city_id']]
 
     df = df.merge(df_tower, right_on='site_id', left_on=f'site_id_{suffix}',how='left'). \
